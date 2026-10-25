@@ -1,0 +1,121 @@
+name: Build Luma macan RAM test image
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout port repository
+        uses: actions/checkout@v4
+
+      - name: Download macan prebuilt kernel package
+        run: |
+          git clone --depth 1 \
+            https://github.com/OnePlus-SM8850-Development/android_device_oneplus_macan-kernel.git \
+            macan-kernel
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y busybox-static cpio gzip
+          git clone --depth 1 https://android.googlesource.com/platform/system/tools/mkbootimg mkbootimg
+
+      - name: Create minimal Luma initramfs
+        run: |
+          mkdir -p initramfs/{bin,dev,proc,sys,tmp,modules,config}
+          cp /bin/busybox initramfs/bin/busybox
+          chmod 755 initramfs/bin/busybox
+          ln -sf busybox initramfs/bin/sh
+          ln -sf busybox initramfs/bin/mount
+          ln -sf busybox initramfs/bin/insmod
+          ln -sf busybox initramfs/bin/mkdir
+          ln -sf busybox initramfs/bin/echo
+          ln -sf busybox initramfs/bin/cat
+          ln -sf busybox initramfs/bin/sleep
+          ln -sf busybox initramfs/bin/telnetd
+          ln -sf busybox initramfs/bin/ifconfig
+          ln -sf busybox initramfs/bin/ip
+          ln -sf busybox initramfs/bin/mdev
+
+          cp macan-kernel/modules/vendor_ramdisk/*.ko initramfs/modules/
+          cp macan-kernel/modules/vendor_ramdisk/modules.load initramfs/modules/
+
+          cat > initramfs/init <<'INIT'
+          #!/bin/busybox sh
+          /bin/busybox --install -s /bin
+          mount -t proc proc /proc
+          mount -t sysfs sysfs /sys
+          mount -t devtmpfs devtmpfs /dev
+          mkdir -p /dev/pts
+          mount -t devpts devpts /dev/pts
+          mkdir -p /config
+          mount -t configfs configfs /config
+
+          echo "Luma macan RAM test: starting module load" > /dev/kmsg
+
+          while read -r mod; do
+            [ -f "/modules/$mod" ] || continue
+            echo "Loading $mod" > /dev/kmsg
+            insmod "/modules/$mod" || echo "Failed to load $mod" > /dev/kmsg
+          done < /modules/modules.load
+
+          echo "Luma macan RAM test: modules loaded" > /dev/kmsg
+
+          UDC=$(ls /sys/class/udc | head -n 1)
+          echo "UDC: $UDC" > /dev/kmsg
+
+          mkdir -p /config/usb_gadget/g1
+          cd /config/usb_gadget/g1
+          echo 0x18d1 > idVendor
+          echo 0x4ee2 > idProduct
+          mkdir -p strings/0x409
+          echo "luma-macan-test" > strings/0x409/serialnumber
+          mkdir -p configs/c.1
+          mkdir -p functions/ncm.usb0
+          ln -sf functions/ncm.usb0 configs/c.1/f1
+          echo "$UDC" > UDC
+
+          sleep 2
+          ip link set usb0 up
+          ip addr add 10.15.19.82/24 dev usb0
+
+          echo "Luma macan RAM test: telnetd starting on 10.15.19.82" > /dev/kmsg
+          telnetd -l /bin/sh
+          echo "Luma macan RAM test ready" > /dev/kmsg
+
+          while true; do sleep 3600; done
+          INIT
+
+          chmod 755 initramfs/init
+
+          cd initramfs
+          find . | cpio -o -H newc --quiet | gzip > ../initramfs.cpio.gz
+          cd ..
+
+      - name: Package RAM-only boot image
+        run: |
+          python3 mkbootimg/mkbootimg.py \
+            --kernel macan-kernel/images/kernel \
+            --ramdisk initramfs.cpio.gz \
+            --dtb macan-kernel/images/macan.dtb \
+            --cmdline "console=ttyMSM0,115200n8 androidboot.hardware=qcom androidboot.usbcontroller=a600000.dwc3" \
+            --pagesize 4096 \
+            --header_version 4 \
+            --os_version 0 \
+            --output luma-macan-test.img
+
+          sha256sum luma-macan-test.img > luma-macan-test.img.sha256
+          cp macan-kernel/images/dtbo.img luma-macan-dtbo.img
+          sha256sum luma-macan-dtbo.img > luma-macan-dtbo.img.sha256
+
+      - name: Upload test image
+        uses: actions/upload-artifact@v4
+        with:
+          name: luma-macan-ram-test
+          path: |
+            luma-macan-test.img
+            luma-macan-test.img.sha256
+            luma-macan-dtbo.img
+            luma-macan-dtbo.img.sha256
