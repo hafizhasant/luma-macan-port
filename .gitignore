@@ -1,0 +1,4 @@
+reference/
+device-info.txt
+*.img
+*.sha256
