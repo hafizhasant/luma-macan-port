@@ -1,0 +1,5 @@
+Device: OP612DL1
+Model: CPH2767
+Build incremental: B.R4T3.5bbee97-35f3ae9-35f3aee
+Build fingerprint: OnePlus/CPH2767IN/OP612DL1:16/BP2A.250605.015/B.R4T3.5bbee97-35f3ae9-35f3aee:user/release-keys
+Kernel: Linux localhost 6.12.58-android16-6-g925a103d123c-ab15898589-4k #1 SMP PREEMPT Mon Jul 20 17:37:05 UTC 2026 aarch64 Android
